@@ -49,9 +49,21 @@ def main():
     status.empty()
     st.subheader("Daily coin table")
     st.dataframe(daily_table, use_container_width=True)
+    st.download_button(
+        "Download daily coin table (CSV)",
+        daily_table.to_csv(index=False),
+        file_name="daily_coins.csv",
+        mime="text/csv",
+    )
 
     st.subheader("Monthly rollup")
     st.dataframe(monthly_rollup, use_container_width=True)
+    st.download_button(
+        "Download monthly rollup (CSV)",
+        monthly_rollup.to_csv(index=False),
+        file_name="monthly_rollup.csv",
+        mime="text/csv",
+    )
 
 
 if __name__ == "__main__":
