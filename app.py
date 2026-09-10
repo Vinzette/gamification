@@ -11,7 +11,7 @@ from tables import build_daily_table, build_monthly_rollup, build_physical_metri
 DEFAULT_REP_CODE = "42216697"
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=5)
 def _load_and_join(summary_bytes_by_name: dict, visit_bytes_by_name: dict, rep_code: str):
     """Cached: all Excel I/O plus the Visit Dump join -- independent of which
     rules are enabled, so toggling a checkbox never re-parses a file."""

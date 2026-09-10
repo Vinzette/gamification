@@ -43,7 +43,7 @@ def _physical_pc_metric(row: dict) -> Optional[float]:
 
 
 def _physical_lpc_metric(row: dict) -> Optional[float]:
-    return row["Physical Lines Cut"] / row["Physical Outlets"] if row["Physical Outlets"] else None
+    return row["Physical Lines Cut"] / row["Physical Outlets"] if row["Physical Outlets"] > 0 else None
 
 
 def _has_physical_data(row: dict) -> bool:
@@ -71,6 +71,9 @@ RULES = [
 
 def rule_key(rule: Rule) -> str:
     return rule.name.lower().replace(" ", "_")
+
+
+_PHYSICAL_PC_KEY, _PHYSICAL_LPC_KEY = (rule_key(r) for r in RULES if r.requires_visits)
 
 
 def _parse_login(value) -> Optional[time]:
@@ -134,7 +137,7 @@ def evaluate_day(
     # Physical bonus: only fires when both physical rules qualified AND are
     # enabled (both present in coins_by_key). Replaces the sum outright so it
     # stays correct even if the 40/40 coin values are edited later.
-    if "physical_pc" in coins_by_key and "physical_lpc" in coins_by_key:
-        total_coins = total_coins - coins_by_key["physical_pc"] - coins_by_key["physical_lpc"] + PHYSICAL_BONUS_COINS
+    if _PHYSICAL_PC_KEY in coins_by_key and _PHYSICAL_LPC_KEY in coins_by_key:
+        total_coins = total_coins - coins_by_key[_PHYSICAL_PC_KEY] - coins_by_key[_PHYSICAL_LPC_KEY] + PHYSICAL_BONUS_COINS
     result["total_coins"] = total_coins
     return result

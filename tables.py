@@ -8,14 +8,26 @@ from coins import RULES, evaluate_day, rule_key
 
 DATE_FORMAT = "%d/%m/%Y"  # KTD3: confirmed against both sample files.
 VISIT_DUMP_SHEET = "Visit DumpReport(V4)"
+SUMMARY_SHEET_COLUMNS = ["Date", "DSR ErpId", "TC", "PC", "LPC", "OVC", "Login"]
+VISIT_DUMP_COLUMNS = ["DSR ERP ID", "Order Date", "Outlets Erp Id", "Outlets", "LinesCut", "OVC", "Telephonic"]
+
+
+def _read_sheet(files, sheet_name: str, usecols: list) -> pd.DataFrame:
+    frames = [pd.read_excel(f, sheet_name=sheet_name, usecols=usecols) for f in files]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def _month_key(dates: pd.Series) -> pd.Series:
+    return dates.dt.to_period("M").astype(str)
 
 
 def load_rows(files, rep_code: str) -> pd.DataFrame:
     """R1, R2: read each file's Summary Sheet tab, filter by rep-code prefix."""
-    frames = [pd.read_excel(f, sheet_name="Summary Sheet") for f in files]
-    if not frames:
-        return pd.DataFrame()
-    combined = pd.concat(frames, ignore_index=True)
+    combined = _read_sheet(files, "Summary Sheet", SUMMARY_SHEET_COLUMNS)
+    if combined.empty:
+        return combined
     combined["DSR ErpId"] = combined["DSR ErpId"].astype(str)
     matched = combined[combined["DSR ErpId"].str.startswith(rep_code)].copy()
     matched["Date"] = pd.to_datetime(matched["Date"], format=DATE_FORMAT)
@@ -35,10 +47,9 @@ def load_visits(files) -> pd.DataFrame:
     must be computed from the full set, before any rep-code filter (see
     build_physical_metrics's covered_months).
     """
-    frames = [pd.read_excel(f, sheet_name=VISIT_DUMP_SHEET) for f in files]
-    if not frames:
-        return pd.DataFrame()
-    combined = pd.concat(frames, ignore_index=True)
+    combined = _read_sheet(files, VISIT_DUMP_SHEET, VISIT_DUMP_COLUMNS)
+    if combined.empty:
+        return combined
     combined = combined.rename(columns={"DSR ERP ID": "DSR ErpId"})
     combined["DSR ErpId"] = combined["DSR ErpId"].astype(str)
     combined["Order Date"] = pd.to_datetime(combined["Order Date"]).dt.normalize()
@@ -60,7 +71,7 @@ def build_physical_metrics(visits: pd.DataFrame, rep_code: str) -> tuple[pd.Data
             set(),
         )
 
-    covered_months = set(visits["Order Date"].dt.to_period("M").astype(str))
+    covered_months = set(_month_key(visits["Order Date"]))
     filtered = visits[visits["DSR ErpId"].str.startswith(rep_code)].copy()
     filtered["_outlet_key"] = filtered["Outlets Erp Id"].fillna(filtered["Outlets"])
     qualifying = filtered[(filtered["OVC"] == "No") & (filtered["Telephonic"] == "No")]
@@ -99,14 +110,14 @@ def build_daily_table(
     active = active.copy()
 
     rules = RULES if physical_metrics is not None else [r for r in RULES if not r.requires_visits]
-    needed_columns = ["Date", "DSR ErpId", "TC", "PC", "LPC", "OVC", "Login"]
+    needed_columns = list(SUMMARY_SHEET_COLUMNS)
 
     if physical_metrics is not None:
         active = active.merge(
             physical_metrics, how="left",
             left_on=["DSR ErpId", "Date"], right_on=["Rep", "Date"],
         )
-        month_covered = active["Date"].dt.to_period("M").astype(str).isin(covered_months)
+        month_covered = _month_key(active["Date"]).isin(covered_months)
         physical_cols = ["Physical PC", "Physical Lines Cut", "Physical Outlets"]
         for col in physical_cols:
             # Covered month + no matching visit rows (zero qualifying visits
@@ -116,8 +127,8 @@ def build_daily_table(
         needed_columns += physical_cols
 
     records = []
-    for _, row in active[needed_columns].iterrows():
-        evaluated = evaluate_day(row.to_dict(), enabled_rules, rules)
+    for row in active[needed_columns].to_dict("records"):
+        evaluated = evaluate_day(row, enabled_rules, rules)
         record = {
             "Rep": row["DSR ErpId"],
             "Date": row["Date"].date(),
@@ -140,5 +151,5 @@ def build_monthly_rollup(daily_table: pd.DataFrame) -> pd.DataFrame:
     if daily_table.empty:
         return pd.DataFrame(columns=["Rep", "Month", "Total Coins"])
     working = daily_table.copy()
-    working["Month"] = pd.to_datetime(working["Date"]).dt.to_period("M").astype(str)
+    working["Month"] = _month_key(pd.to_datetime(working["Date"]))
     return working.groupby(["Rep", "Month"], as_index=False)["Total Coins"].sum()
