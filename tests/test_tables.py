@@ -1,14 +1,22 @@
 import pandas as pd
 
-from tables import build_daily_table, build_monthly_rollup, load_rows
+from tables import build_daily_table, build_monthly_rollup, build_physical_metrics, load_rows, load_visits
 
 COLUMNS = ["Date", "DSR ErpId", "TC", "PC", "LC", "LPC", "OVC", "Login"]
+VISIT_COLUMNS = ["DSR ERP ID", "Order Date", "Outlets Erp Id", "Outlets", "LinesCut", "OVC", "Telephonic"]
 
 
 def make_workbook(path, rows):
     df = pd.DataFrame(rows, columns=COLUMNS)
     with pd.ExcelWriter(path) as writer:
         df.to_excel(writer, sheet_name="Summary Sheet", index=False)
+    return path
+
+
+def make_visit_workbook(path, rows):
+    df = pd.DataFrame(rows, columns=VISIT_COLUMNS)
+    with pd.ExcelWriter(path) as writer:
+        df.to_excel(writer, sheet_name="Visit DumpReport(V4)", index=False)
     return path
 
 
@@ -90,3 +98,105 @@ def test_monthly_rollup_one_rep_two_months():
 def test_monthly_rollup_omits_rep_with_no_included_days():
     daily = pd.DataFrame(columns=["Rep", "Date", "Total Coins"])
     assert build_monthly_rollup(daily).empty
+
+
+def test_load_visits_renames_dsr_erp_id(tmp_path):
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [["42216697SM03", "2026-07-01", "Out-1", "Store One", 6, "No", "No"]],
+    )
+    visits = load_visits([wb])
+    assert "DSR ErpId" in visits.columns
+    assert visits.iloc[0]["DSR ErpId"] == "42216697SM03"
+
+
+def test_build_physical_metrics_counts_only_qualifying_visits(tmp_path):
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [
+            ["42216697SM03", "2026-07-01", "Out-1", "Store One", 6, "No", "No"],
+            ["42216697SM03", "2026-07-01", "Out-2", "Store Two", 10, "Yes", "No"],  # OVC excludes it
+            ["42216697SM03", "2026-07-01", "Out-3", "Store Three", 5, "No", "Yes"],  # Telephonic excludes it
+        ],
+    )
+    visits = load_visits([wb])
+    metrics, covered_months = build_physical_metrics(visits, "42216697")
+    row = metrics.iloc[0]
+    assert row["Physical PC"] == 1
+    assert row["Physical Lines Cut"] == 6
+    assert row["Physical Outlets"] == 1
+    assert covered_months == {"2026-07"}
+
+
+def test_build_physical_metrics_denominator_is_distinct_outlets(tmp_path):
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [
+            ["42216697SM03", "2026-07-01", "Out-1", "Store One", 4, "No", "No"],
+            ["42216697SM03", "2026-07-01", "Out-1", "Store One", 6, "No", "No"],  # same store, twice
+        ],
+    )
+    visits = load_visits([wb])
+    metrics, _ = build_physical_metrics(visits, "42216697")
+    row = metrics.iloc[0]
+    assert row["Physical PC"] == 2  # counts visits
+    assert row["Physical Outlets"] == 1  # distinct stores, not visit count
+
+
+def test_build_physical_metrics_falls_back_to_outlet_name_when_id_missing(tmp_path):
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [["42216697SM03", "2026-07-01", None, "Store One", 6, "No", "No"]],
+    )
+    visits = load_visits([wb])
+    metrics, _ = build_physical_metrics(visits, "42216697")
+    assert metrics.iloc[0]["Physical Outlets"] == 1
+
+
+def test_build_physical_metrics_covered_months_derived_before_rep_filter(tmp_path):
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [["99999999SM01", "2026-07-01", "Out-1", "Store One", 6, "No", "No"]],
+    )
+    visits = load_visits([wb])
+    metrics, covered_months = build_physical_metrics(visits, "42216697")
+    assert metrics.empty
+    assert covered_months == {"2026-07"}
+
+
+def test_daily_table_without_visit_files_omits_physical_columns():
+    rows = pd.DataFrame(
+        [{"Date": pd.Timestamp("2026-07-01"), "DSR ErpId": "42216697SM03", "TC": 31, "PC": 14, "LC": 59, "LPC": 4.21, "OVC": 0, "Login": "08:41"}]
+    )
+    daily = build_daily_table(rows)
+    assert "Physical PC Achieved" not in daily.columns
+
+
+def test_daily_table_uncovered_month_shows_na_for_physical_rules(tmp_path):
+    rows = pd.DataFrame(
+        [{"Date": pd.Timestamp("2026-08-01"), "DSR ErpId": "42216697SM03", "TC": 31, "PC": 14, "LC": 59, "LPC": 4.21, "OVC": 0, "Login": "08:41"}]
+    )
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [["42216697SM03", "2026-07-01", "Out-1", "Store One", 6, "No", "No"]],
+    )
+    visits = load_visits([wb])
+    physical_metrics, covered_months = build_physical_metrics(visits, "42216697")
+    daily = build_daily_table(rows, physical_metrics, covered_months)
+    assert daily.iloc[0]["Physical PC Achieved"] is None
+    assert daily.iloc[0]["Physical PC Qualified"] is None
+
+
+def test_daily_table_covered_month_zero_visits_is_real_zero_not_na(tmp_path):
+    rows = pd.DataFrame(
+        [{"Date": pd.Timestamp("2026-07-02"), "DSR ErpId": "42216697SM03", "TC": 31, "PC": 14, "LC": 59, "LPC": 4.21, "OVC": 0, "Login": "08:41"}]
+    )
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [["42216697SM03", "2026-07-01", "Out-1", "Store One", 6, "No", "No"]],  # different day, same month
+    )
+    visits = load_visits([wb])
+    physical_metrics, covered_months = build_physical_metrics(visits, "42216697")
+    daily = build_daily_table(rows, physical_metrics, covered_months)
+    assert daily.iloc[0]["Physical PC Achieved"] == 0
+    assert daily.iloc[0]["Physical PC Qualified"] == False  # noqa: E712 (may be numpy bool_, not Python bool)
