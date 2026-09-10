@@ -55,25 +55,33 @@ def main():
         status.info("Upload one or more Summary Sheet PC Excel exports to get started.")
         return
 
-    summary_bytes_by_name = {f.name: f.getvalue() for f in uploaded_files}
-    visit_bytes_by_name = {f.name: f.getvalue() for f in (visit_files or [])}
+    if not rep_code.strip():
+        status.warning("Enter a base/rep code -- a blank code would match every rep.")
+        return
+
+    # Keyed by (index, name), not name alone, so two uploads that happen to
+    # share a filename don't silently overwrite each other's bytes.
+    summary_bytes_by_name = {(i, f.name): f.getvalue() for i, f in enumerate(uploaded_files)}
+    visit_bytes_by_name = {(i, f.name): f.getvalue() for i, f in enumerate(visit_files or [])}
     try:
         with status, st.spinner("Loading Summary Sheet data..."):
             rows, physical_metrics, covered_months = _load_and_join(
                 summary_bytes_by_name, visit_bytes_by_name, rep_code
             )
+        if rows.empty:
+            status.warning(f"No rows found for base/rep code '{rep_code}'.")
+            return
+
+        daily_table = build_daily_table(rows, physical_metrics, covered_months, enabled_rules)
+        if daily_table.empty:
+            status.warning(f"No active rep-days found for base/rep code '{rep_code}'.")
+            return
+        monthly_rollup = build_monthly_rollup(daily_table)
     except Exception:
         status.error("File doesn't match the expected Summary Sheet PC / Visit Dump format.")
         return
 
-    if rows.empty:
-        status.warning(f"No rows found for base/rep code '{rep_code}'.")
-        return
-
     status.empty()
-    daily_table = build_daily_table(rows, physical_metrics, covered_months, enabled_rules)
-    monthly_rollup = build_monthly_rollup(daily_table)
-
     st.subheader("Daily coin table")
     st.dataframe(daily_table, use_container_width=True)
     st.download_button(

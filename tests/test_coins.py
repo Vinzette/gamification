@@ -142,3 +142,9 @@ def test_disabling_a_base_rule_keeps_its_columns_but_drops_its_coins():
     )
     assert result["productive_calls_qualified"] is True
     assert result["total_coins"] == 60
+
+
+def test_malformed_login_string_fails_the_gate_not_an_exception():
+    result = evaluate_day(row(TC=20, PC=20, LPC=10, OVC=0, Login="not-a-time"))
+    assert result["login_qualified"] is False
+    assert result["total_coins"] == 0

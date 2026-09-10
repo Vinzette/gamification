@@ -200,3 +200,35 @@ def test_daily_table_covered_month_zero_visits_is_real_zero_not_na(tmp_path):
     daily = build_daily_table(rows, physical_metrics, covered_months)
     assert daily.iloc[0]["Physical PC Achieved"] == 0
     assert daily.iloc[0]["Physical PC Qualified"] == False  # noqa: E712 (may be numpy bool_, not Python bool)
+
+
+def test_daily_table_includes_tc_positive_without_login():
+    rows = pd.DataFrame(
+        [{"Date": pd.Timestamp("2026-07-01"), "DSR ErpId": "42216697SM03", "TC": 20, "PC": 10, "LC": 0, "LPC": 0.0, "OVC": 0, "Login": None}]
+    )
+    daily = build_daily_table(rows)
+    assert len(daily) == 1
+    assert daily.iloc[0]["Login Qualified"] == False  # noqa: E712 (may be numpy bool_, not Python bool)
+    assert daily.iloc[0]["Total Coins"] == 0
+
+
+def test_build_physical_metrics_empty_visits_returns_empty_frame():
+    metrics, covered_months = build_physical_metrics(pd.DataFrame(), "42216697")
+    assert metrics.empty
+    assert covered_months == set()
+
+
+def test_load_rows_deduplicates_reuploaded_rows(tmp_path):
+    wb = make_workbook(tmp_path / "july.xlsx", [["01/07/2026", "42216697SM03", 31, 14, 59, 4.21, 0, "08:41"]])
+    # Same rep-day uploaded twice, as if the same file were selected twice.
+    result = load_rows([wb, wb], "42216697")
+    assert len(result) == 1
+
+
+def test_load_visits_deduplicates_reuploaded_rows(tmp_path):
+    wb = make_visit_workbook(
+        tmp_path / "july_visits.xlsx",
+        [["42216697SM03", "2026-07-01", "Out-1", "Store One", 6, "No", "No"]],
+    )
+    result = load_visits([wb, wb])
+    assert len(result) == 1

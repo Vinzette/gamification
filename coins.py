@@ -50,6 +50,15 @@ def _has_physical_data(row: dict) -> bool:
     return not _is_missing(row.get("Physical PC"))
 
 
+_PHYSICAL_PC_RULE = Rule(
+    "Physical PC", _physical_pc_metric, lambda v: v >= 15, ">= 15", 40,
+    applicable=_has_physical_data, requires_visits=True,
+)
+_PHYSICAL_LPC_RULE = Rule(
+    "Physical LPC", _physical_lpc_metric, lambda v: v >= 6, ">= 6", 40,
+    applicable=_has_physical_data, requires_visits=True,
+)
+
 # R8: the coin-earning rules as a plain, extensible list (KTD1). Physical PC/LPC
 # only apply to a rep-day whose month has a matching Visit Dump upload -- see
 # `applicable` and `requires_visits` (tables.py decides column presence from
@@ -58,14 +67,8 @@ RULES = [
     Rule("Productive Calls", _productive_calls_metric, lambda v: v >= 15, ">= 15", 20),
     Rule("LPC", _lpc_metric, lambda v: v >= 6, ">= 6", 20),
     Rule("OVC rate", _ovc_rate_metric, lambda v: v < 0.40, "< 40%", 40),
-    Rule(
-        "Physical PC", _physical_pc_metric, lambda v: v >= 15, ">= 15", 40,
-        applicable=_has_physical_data, requires_visits=True,
-    ),
-    Rule(
-        "Physical LPC", _physical_lpc_metric, lambda v: v >= 6, ">= 6", 40,
-        applicable=_has_physical_data, requires_visits=True,
-    ),
+    _PHYSICAL_PC_RULE,
+    _PHYSICAL_LPC_RULE,
 ]
 
 
@@ -73,7 +76,10 @@ def rule_key(rule: Rule) -> str:
     return rule.name.lower().replace(" ", "_")
 
 
-_PHYSICAL_PC_KEY, _PHYSICAL_LPC_KEY = (rule_key(r) for r in RULES if r.requires_visits)
+# Tied to the two Rule objects directly, not to a count/filter over RULES --
+# stays correct however many more requires_visits=True rules get appended.
+_PHYSICAL_PC_KEY = rule_key(_PHYSICAL_PC_RULE)
+_PHYSICAL_LPC_KEY = rule_key(_PHYSICAL_LPC_RULE)
 
 
 def _parse_login(value) -> Optional[time]:

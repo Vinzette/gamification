@@ -28,3 +28,11 @@ def test_header_row_is_frozen_on_both_sheets():
     workbook = openpyxl.load_workbook(io.BytesIO(build_excel_report(daily, monthly)))
     for sheet_name in ("Daily", "Monthly"):
         assert workbook[sheet_name].freeze_panes == "A2"
+
+
+def test_autofilter_is_set_on_both_sheets():
+    daily = pd.DataFrame([{"Rep": "A", "Total Coins": 40}])
+    monthly = pd.DataFrame([{"Rep": "A", "Month": "2026-07", "Total Coins": 40}])
+    workbook = openpyxl.load_workbook(io.BytesIO(build_excel_report(daily, monthly)))
+    for sheet_name in ("Daily", "Monthly"):
+        assert workbook[sheet_name].auto_filter.ref is not None

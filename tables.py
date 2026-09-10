@@ -31,7 +31,10 @@ def load_rows(files, rep_code: str) -> pd.DataFrame:
     combined["DSR ErpId"] = combined["DSR ErpId"].astype(str)
     matched = combined[combined["DSR ErpId"].str.startswith(rep_code)].copy()
     matched["Date"] = pd.to_datetime(matched["Date"], format=DATE_FORMAT)
-    return matched
+    # One row per rep per day in the source; drop exact re-uploads (the same
+    # file, or the same date range under a different filename) so they don't
+    # double-count -- pd.concat above has no de-dup of its own.
+    return matched.drop_duplicates(subset=["DSR ErpId", "Date"])
 
 
 def _is_active(rows: pd.DataFrame) -> pd.Series:
@@ -53,7 +56,10 @@ def load_visits(files) -> pd.DataFrame:
     combined = combined.rename(columns={"DSR ERP ID": "DSR ErpId"})
     combined["DSR ErpId"] = combined["DSR ErpId"].astype(str)
     combined["Order Date"] = pd.to_datetime(combined["Order Date"]).dt.normalize()
-    return combined
+    # One row per visit in the source; drop exact re-uploads the same way
+    # load_rows does (no natural visit key is loaded here, so a full-row
+    # match is the re-upload signal).
+    return combined.drop_duplicates()
 
 
 def build_physical_metrics(visits: pd.DataFrame, rep_code: str) -> tuple[pd.DataFrame, set]:
