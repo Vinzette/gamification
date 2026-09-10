@@ -38,7 +38,7 @@ RULES = [
 ]
 
 
-def _rule_key(rule: Rule) -> str:
+def rule_key(rule: Rule) -> str:
     return rule.name.lower().replace(" ", "_")
 
 
@@ -51,15 +51,18 @@ def _parse_login(value) -> Optional[time]:
         return None
 
 
-def login_qualifies(row: dict) -> bool:
-    login_time = _parse_login(row.get("Login"))
+def _gate_open(login_time: Optional[time]) -> bool:
     return login_time is not None and login_time <= LOGIN_CUTOFF
+
+
+def login_qualifies(row: dict) -> bool:
+    return _gate_open(_parse_login(row.get("Login")))
 
 
 def evaluate_day(row: dict) -> dict:
     """R5/R6: the login gate runs first (KTD2); the rule list only runs when it passes."""
     login_time = _parse_login(row.get("Login"))
-    gate_open = login_time is not None and login_time <= LOGIN_CUTOFF
+    gate_open = _gate_open(login_time)
 
     result = {
         "login_target": LOGIN_TARGET_LABEL,
@@ -67,23 +70,14 @@ def evaluate_day(row: dict) -> dict:
         "login_qualified": gate_open,
     }
 
-    if not gate_open:
-        for rule in RULES:
-            key = _rule_key(rule)
-            result[f"{key}_target"] = None
-            result[f"{key}_achieved"] = None
-            result[f"{key}_qualified"] = None
-        result["total_coins"] = 0
-        return result
-
     total_coins = 0
     for rule in RULES:
-        key = _rule_key(rule)
-        value = rule.metric(row)
-        qualified = value is not None and rule.comparison(value)
+        key = rule_key(rule)
+        value = rule.metric(row) if gate_open else None
+        qualified = value is not None and rule.comparison(value) if gate_open else None
         if qualified:
             total_coins += rule.coins
-        result[f"{key}_target"] = rule.target_label
+        result[f"{key}_target"] = rule.target_label if gate_open else None
         result[f"{key}_achieved"] = value
         result[f"{key}_qualified"] = qualified
     result["total_coins"] = total_coins

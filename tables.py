@@ -33,8 +33,9 @@ def build_daily_table(rows: pd.DataFrame) -> pd.DataFrame:
     if active.empty:
         return pd.DataFrame()
 
+    needed_columns = ["Date", "DSR ErpId", "TC", "PC", "LPC", "OVC", "Login"]
     records = []
-    for _, row in active.iterrows():
+    for _, row in active[needed_columns].iterrows():
         evaluated = evaluate_day(row.to_dict())
         record = {
             "Rep": row["DSR ErpId"],

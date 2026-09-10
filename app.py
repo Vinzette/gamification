@@ -10,9 +10,12 @@ DEFAULT_REP_CODE = "42216697"
 
 
 @st.cache_data(show_spinner="Loading Summary Sheet data...")
-def _cached_load_rows(file_bytes_by_name: dict, rep_code: str):
+def _cached_pipeline(file_bytes_by_name: dict, rep_code: str):
     files = [io.BytesIO(content) for content in file_bytes_by_name.values()]
-    return load_rows(files, rep_code)
+    rows = load_rows(files, rep_code)
+    daily_table = build_daily_table(rows)
+    monthly_rollup = build_monthly_rollup(daily_table)
+    return rows, daily_table, monthly_rollup
 
 
 def main():
@@ -29,7 +32,7 @@ def main():
 
     file_bytes_by_name = {f.name: f.getvalue() for f in uploaded_files}
     try:
-        rows = _cached_load_rows(file_bytes_by_name, rep_code)
+        rows, daily_table, monthly_rollup = _cached_pipeline(file_bytes_by_name, rep_code)
     except Exception:
         st.error("File doesn't match the expected Summary Sheet PC format.")
         return
@@ -38,12 +41,10 @@ def main():
         st.warning(f"No rows found for base/rep code '{rep_code}'.")
         return
 
-    daily_table = build_daily_table(rows)
     st.subheader("Daily coin table")
     st.dataframe(daily_table, use_container_width=True)
 
     st.subheader("Monthly rollup")
-    monthly_rollup = build_monthly_rollup(daily_table)
     st.dataframe(monthly_rollup, use_container_width=True)
 
 
