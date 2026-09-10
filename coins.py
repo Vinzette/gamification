@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 LOGIN_CUTOFF = time(10, 0)
 LOGIN_TARGET_LABEL = "on or before 10:00"
+PHYSICAL_BONUS_COINS = 110
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,14 @@ class Rule:
     comparison: Callable[[float], bool]
     target_label: str
     coins: int
+    applicable: Callable[[dict], bool] = lambda row: True
+    requires_visits: bool = False
+
+
+def _is_missing(value) -> bool:
+    """True for None or NaN -- covers a plain None (unit tests) and a real
+    pandas NaN from an unmatched merge (tables.py), no pandas/math import."""
+    return value is None or value != value
 
 
 def _productive_calls_metric(row: dict) -> Optional[float]:
@@ -29,12 +38,34 @@ def _ovc_rate_metric(row: dict) -> Optional[float]:
     return row["OVC"] / row["TC"] if row["TC"] > 0 else None
 
 
-# R8: the three coin-earning rules as a plain, extensible list (KTD1).
-# Adding Physical PC / Physical LPC later means appending entries here.
+def _physical_pc_metric(row: dict) -> Optional[float]:
+    return row["Physical PC"]
+
+
+def _physical_lpc_metric(row: dict) -> Optional[float]:
+    return row["Physical Lines Cut"] / row["Physical Outlets"] if row["Physical Outlets"] else None
+
+
+def _has_physical_data(row: dict) -> bool:
+    return not _is_missing(row.get("Physical PC"))
+
+
+# R8: the coin-earning rules as a plain, extensible list (KTD1). Physical PC/LPC
+# only apply to a rep-day whose month has a matching Visit Dump upload -- see
+# `applicable` and `requires_visits` (tables.py decides column presence from
+# `requires_visits`; `applicable` decides NA-vs-computed per row).
 RULES = [
     Rule("Productive Calls", _productive_calls_metric, lambda v: v >= 15, ">= 15", 20),
-    Rule("LPC", _lpc_metric, lambda v: v > 6, "> 6", 20),
+    Rule("LPC", _lpc_metric, lambda v: v >= 6, ">= 6", 20),
     Rule("OVC rate", _ovc_rate_metric, lambda v: v < 0.40, "< 40%", 40),
+    Rule(
+        "Physical PC", _physical_pc_metric, lambda v: v >= 15, ">= 15", 40,
+        applicable=_has_physical_data, requires_visits=True,
+    ),
+    Rule(
+        "Physical LPC", _physical_lpc_metric, lambda v: v >= 6, ">= 6", 40,
+        applicable=_has_physical_data, requires_visits=True,
+    ),
 ]
 
 
@@ -59,8 +90,22 @@ def login_qualifies(row: dict) -> bool:
     return _gate_open(_parse_login(row.get("Login")))
 
 
-def evaluate_day(row: dict) -> dict:
-    """R5/R6: the login gate runs first (KTD2); the rule list only runs when it passes."""
+def evaluate_day(
+    row: dict,
+    enabled_rules: Optional[Iterable[str]] = None,
+    rules: Optional[list] = None,
+) -> dict:
+    """R5/R6: the login gate runs first (KTD2); each rule only runs when the
+    gate is open and the rule is applicable to this row (has the data it needs).
+
+    `enabled_rules` (rule keys) controls only which qualifying rules count
+    toward Total Coins -- disabled rules still render their Target/Achieved/
+    Qualified normally. `None` means every rule counts (today's behavior).
+    `rules` lets a caller run a subset (e.g. tables.py drops the Physical
+    rules entirely when no Visit Dump data was uploaded this run). `None`
+    means the full module-level RULES list.
+    """
+    rules = rules if rules is not None else RULES
     login_time = _parse_login(row.get("Login"))
     gate_open = _gate_open(login_time)
 
@@ -70,15 +115,26 @@ def evaluate_day(row: dict) -> dict:
         "login_qualified": gate_open,
     }
 
-    total_coins = 0
-    for rule in RULES:
+    coins_by_key = {}
+    for rule in rules:
         key = rule_key(rule)
-        value = rule.metric(row) if gate_open else None
-        qualified = value is not None and rule.comparison(value) if gate_open else None
-        if qualified:
-            total_coins += rule.coins
-        result[f"{key}_target"] = rule.target_label if gate_open else None
-        result[f"{key}_achieved"] = value
+        if not gate_open or not rule.applicable(row):
+            target = achieved = qualified = None
+        else:
+            achieved = rule.metric(row)
+            qualified = achieved is not None and rule.comparison(achieved)
+            target = rule.target_label
+        result[f"{key}_target"] = target
+        result[f"{key}_achieved"] = achieved
         result[f"{key}_qualified"] = qualified
+        if qualified and (enabled_rules is None or key in enabled_rules):
+            coins_by_key[key] = rule.coins
+
+    total_coins = sum(coins_by_key.values())
+    # Physical bonus: only fires when both physical rules qualified AND are
+    # enabled (both present in coins_by_key). Replaces the sum outright so it
+    # stays correct even if the 40/40 coin values are edited later.
+    if "physical_pc" in coins_by_key and "physical_lpc" in coins_by_key:
+        total_coins = total_coins - coins_by_key["physical_pc"] - coins_by_key["physical_lpc"] + PHYSICAL_BONUS_COINS
     result["total_coins"] = total_coins
     return result
