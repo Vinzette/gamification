@@ -9,7 +9,7 @@ from tables import build_daily_table, build_monthly_rollup, load_rows
 DEFAULT_REP_CODE = "42216697"
 
 
-@st.cache_data(show_spinner="Loading Summary Sheet data...")
+@st.cache_data(show_spinner=False)
 def _cached_pipeline(file_bytes_by_name: dict, rep_code: str):
     files = [io.BytesIO(content) for content in file_bytes_by_name.values()]
     rows = load_rows(files, rep_code)
@@ -26,21 +26,27 @@ def main():
     )
     rep_code = st.text_input("Base/rep code", value=DEFAULT_REP_CODE)
 
+    # One placeholder for every transient status message, so a new message
+    # replaces the last one in place instead of briefly overlapping it.
+    status = st.empty()
+
     if not uploaded_files:
-        st.info("Upload one or more Summary Sheet PC Excel exports to get started.")
+        status.info("Upload one or more Summary Sheet PC Excel exports to get started.")
         return
 
     file_bytes_by_name = {f.name: f.getvalue() for f in uploaded_files}
     try:
-        rows, daily_table, monthly_rollup = _cached_pipeline(file_bytes_by_name, rep_code)
+        with status, st.spinner("Loading Summary Sheet data..."):
+            rows, daily_table, monthly_rollup = _cached_pipeline(file_bytes_by_name, rep_code)
     except Exception:
-        st.error("File doesn't match the expected Summary Sheet PC format.")
+        status.error("File doesn't match the expected Summary Sheet PC format.")
         return
 
     if rows.empty:
-        st.warning(f"No rows found for base/rep code '{rep_code}'.")
+        status.warning(f"No rows found for base/rep code '{rep_code}'.")
         return
 
+    status.empty()
     st.subheader("Daily coin table")
     st.dataframe(daily_table, use_container_width=True)
 
